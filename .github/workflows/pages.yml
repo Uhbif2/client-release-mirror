@@ -1,0 +1,45 @@
+name: Publish static distribution
+run-name: Publish ${{ inputs.tag }}
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release containing site.zip
+        required: true
+        type: string
+      sha256:
+        description: Expected SHA-256 of site.zip
+        required: true
+        type: string
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Fetch and check distribution archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_TAG: ${{ inputs.tag }}
+          ARCHIVE_SHA: ${{ inputs.sha256 }}
+        run: |
+          [[ "$ARCHIVE_TAG" =~ ^distribution-[0-9]+$ ]]
+          [[ "$ARCHIVE_SHA" =~ ^[a-f0-9]{64}$ ]]
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern site.zip -- "$ARCHIVE_TAG"
+          printf '%s  site.zip\n' "$ARCHIVE_SHA" | sha256sum --check
+          python3 -m zipfile -e site.zip site
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
