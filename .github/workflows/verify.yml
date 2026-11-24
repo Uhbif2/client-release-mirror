@@ -1,0 +1,52 @@
+name: Verify static distribution
+run-name: Verify ${{ inputs.tag }} on ${{ inputs.origin }}
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release containing the reference site.zip
+        required: true
+        type: string
+      sha256:
+        description: Expected SHA-256 of site.zip
+        required: true
+        type: string
+      origin:
+        description: Public mirror to check
+        required: true
+        type: choice
+        options: [gitlab, github, oracle]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare complete anonymous HTTPS responses
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_TAG: ${{ inputs.tag }}
+          ARCHIVE_SHA: ${{ inputs.sha256 }}
+          MIRROR: ${{ inputs.origin }}
+        run: |
+          [[ "$ARCHIVE_TAG" =~ ^distribution-[0-9]+$ ]]
+          [[ "$ARCHIVE_SHA" =~ ^[a-f0-9]{64}$ ]]
+          case "$MIRROR" in
+            gitlab) base=https://ai-try.gitlab.io/updates ;;
+            github) base=https://uhbif2.github.io/client-release-mirror ;;
+            oracle) base=https://40.233.127.176/updates ;;
+            *) exit 2 ;;
+          esac
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern site.zip -- "$ARCHIVE_TAG"
+          printf '%s  site.zip\n' "$ARCHIVE_SHA" | sha256sum --check
+          python3 -m zipfile -e site.zip site
+          while IFS= read -r -d '' file; do
+            path="${file#site/}"
+            status=$(curl --silent --show-error --fail --connect-timeout 10 --max-time 75 \
+              --proto '=https' --output fetched --write-out '%{http_code}' -- "$base/$path")
+            test "$status" = 200
+            cmp -- "$file" fetched
+            printf '%s %s ' "$status" "$(wc -c < fetched)"
+            sha256sum "$file"
+          done < <(find site/m site/policies site/releases site/android -type f -print0)
